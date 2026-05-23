@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FPS Arena</title>
+
+<style>
+html, body {
+    margin: 0;
+    overflow: hidden;
+    background: #111;
+    font-family: Arial;
+}
+
+/* CANVAS */
+canvas {
+    display: block;
+}
+
+/* UI */
+#ui {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    color: white;
+    z-index: 100;
+    font-size: 14px;
+}
+
+/* CROSSHAIR */
+#crosshair {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 10px;
+    height: 10px;
+    background: white;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+}
+
+/* MENU */
+#menu, #shop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.92);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    color: white;
+    z-index: 200;
+}
+
+#shop { display: none; }
+
+button {
+    padding: 12px 18px;
+    margin: 6px;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+/* ADMIN BOX */
+#consoleBox {
+    position: absolute;
+    bottom: 10px;
+    right: 10px;
+    z-index: 999;
+}
+
+/* GUN MENU */
+#gunMenu {
+    position: absolute;
+    right: 10px;
+    top: 50px;
+    width: 160px;
+    background: rgba(0,0,0,0.8);
+    color: white;
+    padding: 10px;
+    z-index: 150;
+}
+
+.gunItem {
+    padding: 5px;
+    margin: 4px;
+    background: #222;
+    cursor: pointer;
+}
+
+.gunItem:hover {
+    background: #444;
+}
+
+#adminPanel{
+    position: fixed;
+    top: 120px;
+    left: 120px;
+    width: 220px;
+    background: black;
+    color: white;
+    padding: 10px;
+    display: none;
+    z-index: 999999;
+    border: 1px solid #444;
+}
+
+#adminHeader{
+    background: #222;
+    padding: 6px;
+    cursor: move;
+    user-select: none;
+}
+
+</style>
+</head>
+
+<body>
+
+    <div id="loginScreen" style="
+position:fixed;
+inset:0;
+background:#000;
+color:white;
+display:flex;
+flex-direction:column;
+justify-content:center;
+align-items:center;
+z-index:9999;
+">
+
+<h2>LOGIN</h2>
+
+<input id="user" placeholder="Username">
+<input id="pass" type="password" placeholder="Password">
+
+<button onclick="login()">LOGIN</button>
+
+</div>
+
+<div id="menu">
+    <h1>FPS ARENA</h1>
+
+    <button onclick="startGame()">PLAY</button>
+    <button onclick="toggleShop()">SHOP</button>
+
+    <button onclick="logout()">LOGOUT</button>
+</div>
+
+<div id="shop">
+    <h2>SHOP</h2>
+    <p>Points: <span id="pointsText">0</span></p>
+
+    <button onclick="buy('smg')">SMG (200)</button>
+    <button onclick="buy('shotgun')">SHOTGUN (500)</button>
+    <button onclick="buy('rifle')">RIFLE (900)</button>
+    <button onclick="buy('sniper')">SNIPER (1500)</button>
+
+    <button onclick="closeShop()">CLOSE</button>
+</div>
+
+<div id="gunMenu">
+    <b>GUNS</b>
+    <div id="gunList"></div>
+</div>
+
+<!-- ADMIN MUST BE HERE -->
+<div id="adminPanel">
+    <div id="adminHeader">ADMIN PANEL</div>
+
+    <button onclick="requireAdmin() && toggleInfHP()">Toggle Infinite HP</button>
+    <button onclick="requireAdmin() && toggleInfPoints()">Toggle Infinite Points</button>
+    <button onclick="requireAdmin() && skipWave()">Skip Wave</button>
+    <button onclick="closeAdmin()">Close</button>
+    </div>
+
+<input id="consoleBox" type="password" placeholder="admin code..." />
+
+<div id="ui">
+HP: <span id="hp">100</span><br>
+Wave: <span id="waveText">1</span><br>
+Gun: <span id="gunText">PISTOL</span>
+</div>
+
+<div id="crosshair"></div>
+<canvas id="game"></canvas>
+
+<div id="adminChat" style="
+position: fixed;
+bottom: 50px;
+right: 10px;
+width: 220px;
+display: none;
+z-index: 999999;
+">
+
+<input id="adminInput" placeholder="/spawn zombie 50"
+style="width:100%;padding:8px;background:#000;color:#0f0;border:1px solid #444;">
+
+</div>
+
+<script>
+
+    let currentUser = null;
+
+let save = {
+    points: 0,
+    hp: 100,
+    guns: ["pistol"],
+    currentGun: "pistol"
+};
+
+function login(){
+
+    let u = document.getElementById("user").value.trim();
+    let p = document.getElementById("pass").value.trim();
+
+    if(u === "" || p === ""){
+        alert("Enter username and password!");
+        return;
+    }
+
+    currentUser = u;
+
+    loadUser(u);
+
+    document.getElementById("loginScreen").style.display = "none";
+    document.getElementById("menu").style.display = "flex";
+
+    points = save.points;
+    player.hp = save.hp;
+    owned = save.guns;
+    currentGun = save.currentGun;
+
+    updateGunMenu();
+}
+
+function loadUser(user){
+    let data = localStorage.getItem("fps_" + user);
+    if(data){
+        save = JSON.parse(data);
+    }
+}
+
+function saveUser(){
+    if(!currentUser) return;
+    localStorage.setItem("fps_" + currentUser, JSON.stringify(save));
+}
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+canvas.width = innerWidth;
+canvas.height = innerHeight;
+
+/* GAME STATE */
+let gameStarted = false;
+let mouseLocked = false;
+
+/* SYSTEM */
+let points = 0;
+let wave = 1;
+
+let infHP = false;
+let infPoints = false;
+
+/* OBJECTS */
+const keys = {};
+const bullets = [];
+const enemies = [];
+
+const player = {
+    x: 400,
+    y: 400,
+    angle: 0,
+    speed: 4,
+    hp: 100,
+    size: 18
+};
+
+/* GUNS */
+const guns = {
+    pistol: { dmg: 40, speed: 14, cost: 0 },
+    smg: { dmg: 25, speed: 18, cost: 200 },
+    shotgun: { dmg: 90, speed: 16, cost: 500 },
+    rifle: { dmg: 120, speed: 20, cost: 900 },
+    sniper: { dmg: 200, speed: 26, cost: 1500 }
+};
+
+let currentGun = "pistol";
+let owned = ["pistol"];
+
+/* INPUT */
+window.addEventListener("keydown", e => {
+
+    keys[e.key.toLowerCase()] = true;
+
+    /* ESC LEAVE FIX */
+    if (e.key === "Escape") {
+        leaveGame();
+    }
+
+    /* Q UNLOCK */
+    if (e.key.toLowerCase() === "q") {
+        document.exitPointerLock();
+        mouseLocked = false;
+    }
+});
+
+window.addEventListener("keyup", e => {
+    keys[e.key.toLowerCase()] = false;
+});
+
+let adminUnlocked = false;
+
+function unlockAdmin(code){
+    if(code.trim() === "IT X"){
+        adminUnlocked = true;
+        document.getElementById("adminChat").style.display = "block";
+        document.getElementById("adminPanel").style.display = "block";
+        alert("ADMIN UNLOCKED");
+    } else {
+        alert("WRONG CODE");
+    }
+}
+
+/* MOUSE */
+document.addEventListener("mousemove", e => {
+    if (!gameStarted || !mouseLocked) return;
+    player.angle += e.movementX * 0.003;
+});
+
+document.addEventListener("pointerlockchange", () => {
+    mouseLocked = document.pointerLockElement === canvas;
+});
+
+document.body.addEventListener("click", () => {
+    if (!gameStarted) return;
+
+    if (!mouseLocked) {
+        canvas.requestPointerLock();
+    } else {
+        shoot();
+    }
+});
+
+function requireAdmin() {
+    if (!adminUnlocked) {
+        alert("NOT ADMIN");
+        return false;
+    }
+    return true;
+}
+
+function runAdminCommand(cmd){
+
+    if(!adminUnlocked) return;
+
+    let parts = cmd.trim().split(" ");
+    let base = parts[0].toLowerCase();
+
+    if(base === "/spawn"){
+
+        let type = parts[1];
+        let amount = parseInt(parts[2]) || 1;
+
+        if(type === "zombie"){
+
+            for(let i = 0; i < amount; i++){
+                enemies.push({
+                    x: player.x + Math.random()*400 - 200,
+                    y: player.y + Math.random()*400 - 200,
+                    hp: 120,
+                    maxHp: 120,
+                    size: 18,
+                    speed: 1.2
+                });
+            }
+
+            alert("Spawned " + amount + " zombies");
+        }
+    }
+
+    if(base === "/wave"){
+        wave++;
+        spawnWave();
+    }
+
+    if(base === "/killall"){
+        enemies.length = 0;
+    }
+
+    if(base === "/points"){
+        points += parseInt(parts[1] || 0);
+    }
+}
+
+/* SHOOT */
+function shoot() {
+
+    const g = guns[currentGun];
+
+    bullets.push({
+        x: player.x,
+        y: player.y,
+        dx: Math.sin(player.angle) * g.speed,
+        dy: -Math.cos(player.angle) * g.speed,
+        dmg: g.dmg,
+        life: 80
+    });
+}
+
+/* MOVE FIXED */
+function movePlayer() {
+
+    let fx = Math.sin(player.angle);
+    let fy = -Math.cos(player.angle);
+    let rx = Math.cos(player.angle);
+    let ry = Math.sin(player.angle);
+
+    if (keys["w"]) { player.x += fx * player.speed; player.y += fy * player.speed; }
+    if (keys["s"]) { player.x -= fx * player.speed; player.y -= fy * player.speed; }
+    if (keys["a"]) { player.x -= rx * player.speed; player.y -= ry * player.speed; }
+    if (keys["d"]) { player.x += rx * player.speed; player.y += ry * player.speed; }
+}
+
+/* ENEMIES */
+function spawnWave() {
+
+    enemies.length = 0;
+
+    let amt = 5 + wave * 2;
+
+    for (let i = 0; i < amt; i++) {
+        enemies.push({
+            x: Math.random()*2000,
+            y: Math.random()*2000,
+            hp: 100 + wave * 20,
+            maxHp: 100 + wave * 20,
+            size: 18
+        });
+    }
+
+    document.getElementById("waveText").innerText = wave;
+}
+spawnWave();
+
+/* BULLETS */
+function updateBullets() {
+
+    for (let i = bullets.length - 1; i >= 0; i--) {
+
+        let b = bullets[i];
+
+        b.x += b.dx;
+        b.y += b.dy;
+        b.life--;
+
+        for (let j = enemies.length - 1; j >= 0; j--) {
+
+            let e = enemies[j];
+
+            let d = Math.hypot(b.x - e.x, b.y - e.y);
+
+            if (d < e.size) {
+
+                e.hp -= b.dmg;
+                bullets.splice(i, 1);
+
+                if (e.hp <= 0) {
+
+                    enemies.splice(j, 1);
+
+                    if (!infPoints) points += 15;
+
+                    if (enemies.length === 0) {
+                        wave++;
+                        spawnWave();
+                    }
+                }
+                break;
+            }
+        }
+
+        if (b.life <= 0) bullets.splice(i, 1);
+    }
+}
+
+/* ENEMIES AI */
+function updateEnemies() {
+
+    for (let e of enemies) {
+
+        let a = Math.atan2(player.y - e.y, player.x - e.x);
+
+        e.x += Math.cos(a) * 1.2;
+        e.y += Math.sin(a) * 1.2;
+
+        let d = Math.hypot(player.x - e.x, player.y - e.y);
+
+        if (d < 35) {
+
+            if (!infHP) player.hp -= 0.2;
+
+            if (player.hp <= 0) location.reload();
+        }
+    }
+}
+
+/* DRAW */
+function draw() {
+
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    ctx.save();
+    ctx.translate(canvas.width/2, canvas.height/2);
+    ctx.rotate(-player.angle);
+    ctx.translate(-player.x, -player.y);
+
+    enemies.forEach(e => {
+
+        ctx.fillStyle = "red";
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, e.size, 0, Math.PI*2);
+        ctx.fill();
+
+        ctx.save();
+        ctx.translate(e.x, e.y);
+
+        ctx.fillStyle = "black";
+        ctx.fillRect(-22,-35,44,6);
+
+        ctx.fillStyle = "#00ff66";
+        ctx.fillRect(-20,-33,(e.hp/e.maxHp)*40,3);
+
+        ctx.restore();
+    });
+
+    bullets.forEach(b => {
+        ctx.fillStyle = "yellow";
+        ctx.beginPath();
+        ctx.arc(b.x,b.y,4,0,Math.PI*2);
+        ctx.fill();
+    });
+
+    ctx.fillStyle = "lime";
+    ctx.beginPath();
+    ctx.arc(player.x,player.y,player.size,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.restore();
+}
+
+/* LOOP */
+function loop() {
+
+    if (gameStarted) {
+        movePlayer();
+        updateBullets();
+        updateEnemies();
+    }
+
+    if (infPoints) points = 999999;
+    if (infHP) player.hp = 100;
+
+    document.getElementById("hp").innerText = Math.floor(player.hp);
+    document.getElementById("pointsText").innerText = points;
+
+    draw();
+    requestAnimationFrame(loop);
+}
+loop();
+
+/* SHOP */
+function buy(g) {
+    if (points >= guns[g].cost) {
+        points -= guns[g].cost;
+        currentGun = g;
+        owned.push(g);
+        updateGunMenu();
+    }
+}
+
+/* GUN MENU */
+function updateGunMenu() {
+    let list = document.getElementById("gunList");
+    list.innerHTML = "";
+
+    owned.forEach(g => {
+        let div = document.createElement("div");
+        div.className = "gunItem";
+        div.innerText = g.toUpperCase();
+        div.onclick = () => currentGun = g;
+        list.appendChild(div);
+    });
+}
+updateGunMenu();
+
+/* UI */
+function startGame() {
+    gameStarted = true;
+    document.getElementById("menu").style.display = "none";
+    canvas.requestPointerLock();
+}
+
+function leaveGame() {
+    gameStarted = false;
+    document.exitPointerLock();
+    document.getElementById("menu").style.display = "flex";
+}
+
+function toggleShop() {
+    document.getElementById("shop").style.display = "flex";
+}
+
+function closeShop() {
+    document.getElementById("shop").style.display = "none";
+}
+
+const adminPanel = document.getElementById("adminPanel");
+const adminHeader = document.getElementById("adminHeader");
+
+let dragging = false;
+let offsetX = 0;
+let offsetY = 0;
+
+adminHeader.addEventListener("mousedown", (e) => {
+    dragging = true;
+    offsetX = e.clientX - adminPanel.offsetLeft;
+    offsetY = e.clientY - adminPanel.offsetTop;
+});
+
+document.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+
+    adminPanel.style.left = (e.clientX - offsetX) + "px";
+    adminPanel.style.top = (e.clientY - offsetY) + "px";
+});
+
+document.addEventListener("mouseup", () => {
+    dragging = false;
+});
+
+window.onload = function () {
+
+    const consoleBox = document.getElementById("consoleBox");
+
+    consoleBox.addEventListener("keydown", function(e){
+
+        if(e.key === "Enter"){
+            unlockAdmin(consoleBox.value);
+            consoleBox.value = "";
+        }
+    });
+};
+
+function logout(){
+    save.points = points;
+    save.hp = player.hp;
+    save.guns = owned;
+    save.currentGun = currentGun;
+
+    saveUser();
+
+    location.reload();
+}
+
+function toggleInfHP(){
+    infHP = !infHP;
+}
+
+function toggleInfPoints(){
+    infPoints = !infPoints;
+}
+
+function skipWave(){
+    if(!adminUnlocked) return;
+
+    wave++;
+    spawnWave();
+    document.getElementById("waveText").innerText = wave;
+}
+
+function closeAdmin(){
+    document.getElementById("adminPanel").style.display = "none";
+}
+
+</script>
+</body>
+</html>
